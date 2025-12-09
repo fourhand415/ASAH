@@ -124,7 +124,15 @@ def recommend_products(customer_id, rfm_df, top_cluster_df, user_matrix, item_si
     }, None
 
 # Sidebar Filters
-st.sidebar.image("https://assets.cdn.dicoding.com/original/commons/logo-asah.png", width=200)
+st.sidebar.image("https://assets.cdn.dicoding.com/original/commons/logo-asah.png", use_container_width=True)
+            
+l1, l2 = st.sidebar.columns(2)
+with l1:
+    st.image("https://assets.cdn.dicoding.com/original/commons/certificate_logo.png", use_container_width=True)
+
+with l2:
+    st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/c/cd/Accenture.svg/250px-Accenture.svg.png", use_container_width=True)
+
 st.sidebar.header("Global Filters")
 
 all_countries = sorted(df_full["Country"].dropna().unique())
