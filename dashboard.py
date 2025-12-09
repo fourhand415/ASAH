@@ -4,24 +4,38 @@ import pickle
 import matplotlib.pyplot as plt
 import gc 
 
-# ============================
-# PAGE CONFIG
-# ============================
+# Page Config
 st.set_page_config(page_title="Retail Analytics Dashboard", layout="wide", page_icon="🛍️")
 
-# ============================
-# 1. GLOBAL CONFIGURATION
-# ============================
+# Global Configuration (Updated Names)
 CLUSTER_PROFILE = {
-    0: {"name": "Penny Pinchers (Hemat)", "icon": "🛒", "desc": "Belanja rutin tapi nominal kecil. Sangat sensitif harga.", "risk_profile": "Low Risk"},
-    1: {"name": "The Whales (Sultan)", "icon": "👑", "desc": "Customer VIP. Frekuensi tinggi & nominal besar.", "risk_profile": "Very Low Risk"},
-    2: {"name": "Regulars (Standar)", "icon": "👥", "desc": "Customer rata-rata. Potensi besar untuk ditingkatkan (Upselling).", "risk_profile": "Medium Risk"},
-    3: {"name": "Hibernating (Dormant)", "icon": "💤", "desc": "Dulu aktif, sekarang sudah lama menghilang (Churn).", "risk_profile": "High Risk"}
+    0: {
+        "name": "At-Risk Low Spenders", 
+        "icon": "🛒", 
+        "desc": "Belanja rutin tapi nominal kecil. Sangat sensitif harga.", 
+        "risk_profile": "Low Risk"
+    },
+    1: {
+        "name": "Champions / VIP", 
+        "icon": "👑", 
+        "desc": "Customer VIP. Frekuensi tinggi & nominal besar.", 
+        "risk_profile": "Very Low Risk"
+    },
+    2: {
+        "name": "Potential Loyalists (Need Attention)", 
+        "icon": "👥", 
+        "desc": "Customer rata-rata. Potensi besar untuk ditingkatkan (Upselling).", 
+        "risk_profile": "Medium Risk"
+    },
+    3: {
+        "name": "Lost / Dead Customers", 
+        "icon": "💤", 
+        "desc": "Dulu aktif, sekarang sudah lama menghilang (Churn).", 
+        "risk_profile": "High Risk"
+    }
 }
 
-# ============================
-# LOAD DATA (LAZY LOADING)
-# ============================
+# Load Data (Lazy Loading)
 @st.cache_data
 def load_basic_data():
     df_full = pd.read_csv("df_full.csv")
@@ -43,7 +57,7 @@ def load_recommendation_models():
 
 df_full, rfm = load_basic_data()
 
-# ---------- Data Type Handling ----------
+# Data Type Handling
 def try_cast_customerid_to_int(df, col):
     try:
         df[col] = pd.to_numeric(df[col], errors="coerce").astype('Int64')
@@ -64,9 +78,7 @@ def normalize_customer_id_input(cid_input):
     except Exception:
         return cid_input
 
-# ============================
-# RECOMMENDATION FUNCTION
-# ============================
+# Recommendation Function
 def recommend_products(customer_id, rfm_df, top_cluster_df, user_matrix, item_sim_df, n=5):
     cid = normalize_customer_id_input(customer_id)
     try: in_rfm = cid in rfm_df['Customer ID'].astype(object).values
@@ -111,9 +123,7 @@ def recommend_products(customer_id, rfm_df, top_cluster_df, user_matrix, item_si
         "Bought List": bought_items
     }, None
 
-# ============================
-# SIDEBAR
-# ============================
+# Sidebar Filters
 st.sidebar.image("https://cdn-icons-png.flaticon.com/512/3135/3135715.png", width=50)
 st.sidebar.header("Global Filters")
 
@@ -132,9 +142,7 @@ if cluster_filter: df_filtered = df_filtered[df_filtered["Cluster"].isin(cluster
 
 menu = st.sidebar.radio("Navigasi:", ["Dashboard EDA", "Customer Recommendation", "Cluster Insight"])
 
-# ============================
-# 1. DASHBOARD EDA
-# ============================
+# 1. Dashboard EDA
 if menu == "Dashboard EDA":
     st.title("📈 Executive Dashboard Overview")
     st.markdown("Ringkasan performa bisnis berdasarkan filter yang dipilih.")
@@ -146,7 +154,6 @@ if menu == "Dashboard EDA":
     with k4: st.metric("Unique Products", f"{df_filtered['Description'].nunique():,}", help="Varian produk")
 
     with st.expander("📂 Lihat Sampel Data Transaksi"):
-        # REVERTED FIX: use_container_width=True (Aman untuk versi lama)
         st.dataframe(df_filtered.head(), use_container_width=True)
 
     st.markdown("---")
@@ -185,23 +192,21 @@ if menu == "Dashboard EDA":
 
     st.markdown("---")
 
-    st.subheader("💎 Top 10 High Value Customers (Whales)")
+    # Update nama di header tabel
+    st.subheader("💎 Top 10 High Value Customers (Champions / VIP)")
     top_cust = df_filtered.groupby("Customer ID")["Revenue"].sum().sort_values(ascending=False).head(10).reset_index()
     top_cust = top_cust.merge(rfm[['Customer ID', 'Cluster']], on='Customer ID', how='left')
     top_cust['Cluster Group'] = top_cust['Cluster'].map(lambda x: CLUSTER_PROFILE.get(x, {}).get('name', str(x)))
     top_cust["Revenue"] = top_cust["Revenue"].apply(lambda x: f"£{x:,.0f}")
     top_cust['Customer ID'] = top_cust['Customer ID'].astype(str)
     
-    # REVERTED FIX: use_container_width=True
     st.dataframe(top_cust[['Customer ID', 'Cluster Group', 'Revenue']], use_container_width=True, hide_index=True)
 
     st.markdown("---")
     csv = df_filtered.to_csv(index=False).encode('utf-8')
     st.download_button(label="Download Filtered CSV", data=csv, file_name='filtered_transactions.csv', mime='text/csv', type="primary")
 
-# ============================
-# 2. CUSTOMER RECOMMENDATION
-# ============================
+# 2. Customer Recommendation
 elif menu == "Customer Recommendation":
     st.header("🎯 Customer 360° & Recommendation")
     st.caption("Profil detail customer, status kesehatan, dan rekomendasi produk personal.")
@@ -215,7 +220,7 @@ elif menu == "Customer Recommendation":
                 c_prof = CLUSTER_PROFILE.get(cls_id, {})
                 c_name_short = c_prof.get('name', str(cls_id)).split("(")[0]
                 c_icon = c_prof.get('icon', "")
-                st.markdown(f"**{c_icon} {c_name_short}**")
+                st.markdown(f"{c_icon} {c_name_short}")
                 top3_cheat = rfm[rfm['Cluster'] == cls_id].sort_values('Monetary', ascending=False).head(3)
                 for _, row in top3_cheat.iterrows():
                     st.code(f"{int(row['Customer ID'])}", language="text")
@@ -350,9 +355,7 @@ elif menu == "Customer Recommendation":
                 st.caption("Barang populer yang belum pernah dibeli (Potensi Upsell).")
                 display_product_cards(results["Cluster Products Not Bought"], df_full, promo_label="🆕 NEW ARRIVAL")
 
-# ============================
-# 3. CLUSTER INSIGHT
-# ============================
+# 3. Cluster Insight
 elif menu == "Cluster Insight":
     st.header("🔎 Cluster Strategic Insight")
     st.caption("Analisis mendalam perilaku segmen menggunakan data global.")
