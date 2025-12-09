@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import pickle
 import matplotlib.pyplot as plt
+import gc 
 
 # ============================
 # PAGE CONFIG
@@ -9,49 +10,38 @@ import matplotlib.pyplot as plt
 st.set_page_config(page_title="Retail Analytics Dashboard", layout="wide", page_icon="🛍️")
 
 # ============================
-# 1. GLOBAL CONFIGURATION (AGAR SERAGAM)
+# 1. GLOBAL CONFIGURATION
 # ============================
 CLUSTER_PROFILE = {
-    0: {
-        "name": "Penny Pinchers (Hemat)",
-        "icon": "🛒",
-        "desc": "Belanja rutin tapi nominal kecil. Sangat sensitif harga.",
-        "risk_profile": "Low Risk"
-    },
-    1: {
-        "name": "The Whales (Sultan)",
-        "icon": "👑",
-        "desc": "Customer VIP. Frekuensi tinggi & nominal besar.",
-        "risk_profile": "Very Low Risk"
-    },
-    2: {
-        "name": "Regulars (Standar)",
-        "icon": "👥",
-        "desc": "Customer rata-rata. Potensi besar untuk ditingkatkan (Upselling).",
-        "risk_profile": "Medium Risk"
-    },
-    3: {
-        "name": "Hibernating (Dormant)",
-        "icon": "💤",
-        "desc": "Dulu aktif, sekarang sudah lama menghilang (Churn).",
-        "risk_profile": "High Risk"
-    }
+    0: {"name": "Penny Pinchers (Hemat)", "icon": "🛒", "desc": "Belanja rutin tapi nominal kecil. Sangat sensitif harga.", "risk_profile": "Low Risk"},
+    1: {"name": "The Whales (Sultan)", "icon": "👑", "desc": "Customer VIP. Frekuensi tinggi & nominal besar.", "risk_profile": "Very Low Risk"},
+    2: {"name": "Regulars (Standar)", "icon": "👥", "desc": "Customer rata-rata. Potensi besar untuk ditingkatkan (Upselling).", "risk_profile": "Medium Risk"},
+    3: {"name": "Hibernating (Dormant)", "icon": "💤", "desc": "Dulu aktif, sekarang sudah lama menghilang (Churn).", "risk_profile": "High Risk"}
 }
 
 # ============================
-# LOAD DATA
+# LOAD DATA (LAZY LOADING)
 # ============================
 @st.cache_data
-def load_all():
+def load_basic_data():
     df_full = pd.read_csv("df_full.csv")
     rfm = pd.read_pickle("rfm.pkl")
+    return df_full, rfm
+
+@st.cache_data
+def load_recommendation_models():
     user_item_matrix = pd.read_pickle("user_item_matrix.pkl")
     item_similarity_df = pd.read_pickle("item_similarity_df.pkl")
     with open("topN_cluster.pkl", "rb") as f:
         topN_cluster = pickle.load(f)
-    return df_full, rfm, topN_cluster, user_item_matrix, item_similarity_df
+    
+    try:
+        user_item_matrix.index = pd.to_numeric(user_item_matrix.index, errors="coerce").astype('Int64')
+    except Exception:
+        pass
+    return topN_cluster, user_item_matrix, item_similarity_df
 
-df_full, rfm, topN_cluster, user_item_matrix, item_similarity_df = load_all()
+df_full, rfm = load_basic_data()
 
 # ---------- Data Type Handling ----------
 def try_cast_customerid_to_int(df, col):
@@ -64,14 +54,9 @@ def try_cast_customerid_to_int(df, col):
 try:
     rfm = try_cast_customerid_to_int(rfm, "Customer ID")
     df_full = try_cast_customerid_to_int(df_full, "Customer ID")
-    try:
-        user_item_matrix.index = pd.to_numeric(user_item_matrix.index, errors="coerce").astype('Int64')
-    except Exception:
-        pass
 except Exception:
     pass
 
-# Helper: Normalize input ID
 def normalize_customer_id_input(cid_input):
     try:
         cid_int = int(cid_input)
@@ -84,43 +69,30 @@ def normalize_customer_id_input(cid_input):
 # ============================
 def recommend_products(customer_id, rfm_df, top_cluster_df, user_matrix, item_sim_df, n=5):
     cid = normalize_customer_id_input(customer_id)
+    try: in_rfm = cid in rfm_df['Customer ID'].astype(object).values
+    except: in_rfm = cid in rfm_df['Customer ID'].values
 
-    # Check presence
-    try:
-        in_rfm = cid in rfm_df['Customer ID'].astype(object).values
-    except Exception:
-        in_rfm = cid in rfm_df['Customer ID'].values
+    if not in_rfm: return None, f"Customer ID {customer_id} tidak ditemukan."
 
-    if not in_rfm:
-        return None, f"Customer ID {customer_id} tidak ditemukan."
+    try: in_user_matrix = cid in user_matrix.index.astype(object)
+    except: in_user_matrix = cid in user_matrix.index
 
-    try:
-        in_user_matrix = cid in user_matrix.index.astype(object)
-    except Exception:
-        in_user_matrix = cid in user_matrix.index
+    if not in_user_matrix: return None, f"Customer ID {customer_id} tidak memiliki transaksi."
 
-    if not in_user_matrix:
-        return None, f"Customer ID {customer_id} tidak memiliki transaksi."
+    try: cluster = int(rfm_df.loc[rfm_df['Customer ID'] == cid, 'Cluster'].values[0])
+    except: cluster = int(rfm_df.loc[rfm_df['Customer ID'].astype(str) == str(cid), 'Cluster'].values[0])
 
-    # Get cluster
-    try:
-        cluster = int(rfm_df.loc[rfm_df['Customer ID'] == cid, 'Cluster'].values[0])
-    except Exception:
-        cluster = int(rfm_df.loc[rfm_df['Customer ID'].astype(str) == str(cid), 'Cluster'].values[0])
-
-    # Recommendations
     cluster_reco = top_cluster_df[top_cluster_df['Cluster'] == cluster]['Description'].tolist()[:n]
     
     bought_items = []
     try:
         bought_series = user_matrix.loc[cid]
         bought_items = bought_series[bought_series > 0].index.tolist()
-    except Exception:
+    except:
         try:
             bought_series = user_matrix.loc[str(cid)]
             bought_items = bought_series[bought_series > 0].index.tolist()
-        except Exception:
-            bought_items = []
+        except: bought_items = []
 
     similar_items = []
     if len(bought_items) > 0:
@@ -140,7 +112,7 @@ def recommend_products(customer_id, rfm_df, top_cluster_df, user_matrix, item_si
     }, None
 
 # ============================
-# SIDEBAR GLOBAL FILTERS
+# SIDEBAR
 # ============================
 st.sidebar.image("https://cdn-icons-png.flaticon.com/512/3135/3135715.png", width=50)
 st.sidebar.header("Global Filters")
@@ -153,18 +125,11 @@ country_filter = st.sidebar.multiselect("🌍 Filter Country", options=all_count
 month_filter = st.sidebar.multiselect("📅 Filter Bulan", options=all_months)
 cluster_filter = st.sidebar.multiselect("📦 Filter Cluster", options=all_clusters)
 
-# Filter Logic
 df_filtered = df_full.copy()
-if country_filter:
-    df_filtered = df_filtered[df_filtered["Country"].isin(country_filter)]
-if month_filter:
-    df_filtered = df_filtered[df_filtered["YearMonth"].isin(month_filter)]
-if cluster_filter:
-    df_filtered = df_filtered[df_filtered["Cluster"].isin(cluster_filter)]
+if country_filter: df_filtered = df_filtered[df_filtered["Country"].isin(country_filter)]
+if month_filter: df_filtered = df_filtered[df_filtered["YearMonth"].isin(month_filter)]
+if cluster_filter: df_filtered = df_filtered[df_filtered["Cluster"].isin(cluster_filter)]
 
-# ============================
-# MENU
-# ============================
 menu = st.sidebar.radio("Navigasi:", ["Dashboard EDA", "Customer Recommendation", "Cluster Insight"])
 
 # ============================
@@ -174,49 +139,34 @@ if menu == "Dashboard EDA":
     st.title("📈 Executive Dashboard Overview")
     st.markdown("Ringkasan performa bisnis berdasarkan filter yang dipilih.")
     
-    # KPI
-    st.markdown("### Key Performance Indicators")
     k1, k2, k3, k4 = st.columns(4)
-    with k1:
-        with st.container(border=True):
-            st.metric("Total Revenue", f"£{df_filtered['Revenue'].sum():,.0f}", help="Total pendapatan kotor")
-    with k2:
-        with st.container(border=True):
-            st.metric("Active Customers", f"{df_filtered['Customer ID'].nunique():,}", help="Jumlah customer unik")
-    with k3:
-        with st.container(border=True):
-            st.metric("Total Transactions", f"{df_filtered.shape[0]:,}", help="Jumlah invoice")
-    with k4:
-        with st.container(border=True):
-            st.metric("Unique Products", f"{df_filtered['Description'].nunique():,}", help="Varian produk")
+    with k1: st.metric("Total Revenue", f"£{df_filtered['Revenue'].sum():,.0f}", help="Total pendapatan kotor")
+    with k2: st.metric("Active Customers", f"{df_filtered['Customer ID'].nunique():,}", help="Jumlah customer unik")
+    with k3: st.metric("Total Transactions", f"{df_filtered.shape[0]:,}", help="Jumlah invoice")
+    with k4: st.metric("Unique Products", f"{df_filtered['Description'].nunique():,}", help="Varian produk")
 
     with st.expander("📂 Lihat Sampel Data Transaksi"):
+        # REVERTED FIX: use_container_width=True (Aman untuk versi lama)
         st.dataframe(df_filtered.head(), use_container_width=True)
 
     st.markdown("---")
 
-    # Chart Row 1
     c1, c2 = st.columns([2, 1])
     with c1:
         st.subheader("📅 Revenue Trend")
         revenue_trend = df_filtered.groupby("YearMonth")["Revenue"].sum()
-        if not revenue_trend.empty:
-            st.line_chart(revenue_trend, color="#29b5e8")
-        else:
-            st.warning("Data kosong.")
+        if not revenue_trend.empty: st.line_chart(revenue_trend, color="#29b5e8")
+        else: st.warning("Data kosong.")
 
     with c2:
         st.subheader("👥 Cluster Distribution")
         cluster_dist = df_filtered.groupby("Customer ID")["Cluster"].first().value_counts().sort_index()
         cluster_dist.index = [f"{i}: {CLUSTER_PROFILE[i]['name'].split('(')[0]}" for i in cluster_dist.index]
-        if not cluster_dist.empty:
-            st.bar_chart(cluster_dist, color="#ffaa00")
-        else:
-            st.warning("Data kosong.")
+        if not cluster_dist.empty: st.bar_chart(cluster_dist, color="#ffaa00")
+        else: st.warning("Data kosong.")
 
     st.markdown("---")
 
-    # Chart Row 2
     c3, c4 = st.columns(2)
     with c3:
         st.subheader("🏆 Top 10 Best Sellers")
@@ -235,13 +185,14 @@ if menu == "Dashboard EDA":
 
     st.markdown("---")
 
-    # Top Customers
     st.subheader("💎 Top 10 High Value Customers (Whales)")
     top_cust = df_filtered.groupby("Customer ID")["Revenue"].sum().sort_values(ascending=False).head(10).reset_index()
     top_cust = top_cust.merge(rfm[['Customer ID', 'Cluster']], on='Customer ID', how='left')
     top_cust['Cluster Group'] = top_cust['Cluster'].map(lambda x: CLUSTER_PROFILE.get(x, {}).get('name', str(x)))
     top_cust["Revenue"] = top_cust["Revenue"].apply(lambda x: f"£{x:,.0f}")
     top_cust['Customer ID'] = top_cust['Customer ID'].astype(str)
+    
+    # REVERTED FIX: use_container_width=True
     st.dataframe(top_cust[['Customer ID', 'Cluster Group', 'Revenue']], use_container_width=True, hide_index=True)
 
     st.markdown("---")
@@ -249,111 +200,76 @@ if menu == "Dashboard EDA":
     st.download_button(label="Download Filtered CSV", data=csv, file_name='filtered_transactions.csv', mime='text/csv', type="primary")
 
 # ============================
-# 2. CUSTOMER RECOMMENDATION (FINAL: METRICS + CHARTS + ROBUST CARDS)
+# 2. CUSTOMER RECOMMENDATION
 # ============================
 elif menu == "Customer Recommendation":
     st.header("🎯 Customer 360° & Recommendation")
     st.caption("Profil detail customer, status kesehatan, dan rekomendasi produk personal.")
 
-    # --- FITUR BARU: CHEATSHEET TOP 3 CUSTOMER PER CLUSTER ---
     with st.expander("💡 Belum punya ID? Klik untuk lihat Contoh Customer (Top 3 per Cluster)"):
         st.write("Salin ID di bawah ini untuk mencoba demo:")
-        
-        # Buat 4 kolom untuk 4 cluster
         cols_cheat = st.columns(4)
         sorted_clusters = sorted(rfm['Cluster'].unique())
-        
         for i, cls_id in enumerate(sorted_clusters):
             with cols_cheat[i]:
-                # Ambil Info Cluster
                 c_prof = CLUSTER_PROFILE.get(cls_id, {})
-                c_name_short = c_prof.get('name', str(cls_id)).split("(")[0] # Ambil nama depannya aja biar gak kepanjang
+                c_name_short = c_prof.get('name', str(cls_id)).split("(")[0]
                 c_icon = c_prof.get('icon', "")
-                
                 st.markdown(f"**{c_icon} {c_name_short}**")
-                
-                # Ambil Top 3 berdasarkan Monetary
                 top3_cheat = rfm[rfm['Cluster'] == cls_id].sort_values('Monetary', ascending=False).head(3)
-                
                 for _, row in top3_cheat.iterrows():
-                    # Tampilkan ID dalam format code block (biar gampang copy)
-                    # dan Monetary kecil di bawahnya
                     st.code(f"{int(row['Customer ID'])}", language="text")
                     st.caption(f"Rev: £{row['Monetary']:,.0f}")
 
-    # Input Customer ID
     col_input, col_btn = st.columns([3, 1])
-    with col_input:
-        customer_id_input = st.number_input("Masukkan Customer ID", min_value=1, step=1)
+    with col_input: customer_id_input = st.number_input("Masukkan Customer ID", min_value=1, step=1)
     with col_btn:
         st.write("##") 
         check_btn = st.button("🔍 Analisis Customer", type="primary")
 
-    # --- FUNGSI TAMPILAN CARD DENGAN PROMO TAG & ERROR HANDLING ---
     def display_product_cards(product_list, df_source, promo_label=None):
-        # FALLBACK LOGIC: Jika list rekomendasi kosong
         if not product_list or len(product_list) == 0:
             st.warning("⚠️ Data personal belum cukup. Menampilkan **Global Best Sellers** sebagai alternatif:")
-            # Ambil 5 produk terlaris se-toko
             fallback_items = df_source.groupby("Description")["Quantity"].sum().sort_values(ascending=False).head(5).index.tolist()
             product_list = fallback_items
-            promo_label = "🔥 Global Hot Item" # Override label jadi netral
+            promo_label = "🔥 Global Hot Item" 
 
-        # 1. Filter data produk
         subset = df_source[df_source['Description'].isin(product_list)].copy()
-        
         if subset.empty:
             st.error("Gagal memuat detail produk.")
             return
 
-        # 2. Fix UnitPrice jika tidak ada (Mencegah KeyError)
         if 'UnitPrice' not in subset.columns:
-            # Hindari pembagian dengan nol
             subset = subset[subset['Quantity'] > 0] 
             subset['UnitPrice'] = subset['Revenue'] / subset['Quantity']
 
-        # 3. Agregasi Statistik
-        stats = subset.groupby('Description').agg({
-            'UnitPrice': 'mean',
-            'Quantity': 'sum'
-        }).reset_index()
-        
-        # 4. Reindex agar urutan sesuai rekomendasi awal
+        stats = subset.groupby('Description').agg({'UnitPrice': 'mean', 'Quantity': 'sum'}).reset_index()
         stats = stats.set_index('Description').reindex(product_list).reset_index()
-
-        # 5. Render Card (Grid Layout 2 Kolom)
         cols = st.columns(2) 
         
         for idx, row in stats.iterrows():
             if pd.isna(row['UnitPrice']): continue
-            
-            # Tentukan kolom mana (kiri/kanan)
             col_target = cols[idx % 2]
-            
             with col_target:
                 with st.container(border=True):
-                    # Header: Promo Tag (Jika ada)
-                    if promo_label:
-                        st.markdown(f":red-background[**{promo_label}**]")
-                    
-                    # Isi Card
+                    if promo_label: st.markdown(f":red-background[**{promo_label}**]")
                     c_icon, c_text = st.columns([1, 4])
-                    with c_icon:
-                        st.write("# 🛒")
+                    with c_icon: st.write("# 🛒")
                     with c_text:
                         st.markdown(f"**{row['Description']}**")
                         st.markdown(f"Harga: **£{row['UnitPrice']:,.2f}**")
                         st.caption(f"Terjual: {int(row['Quantity']):,} unit")
 
     if check_btn:
+        with st.spinner("Sedang memuat model rekomendasi..."):
+            topN_cluster, user_item_matrix, item_similarity_df = load_recommendation_models()
+        
         results, error = recommend_products(customer_id_input, rfm, topN_cluster, user_item_matrix, item_similarity_df)
 
-        if error:
-            st.error(error)
+        if error: st.error(error)
         else:
             cid = normalize_customer_id_input(customer_id_input)
             cluster = results["Cluster"]
-            
             c_profile = CLUSTER_PROFILE.get(cluster, {})
             c_name = c_profile.get("name", f"Cluster {cluster}")
             c_icon = c_profile.get("icon", "📦")
@@ -365,7 +281,6 @@ elif menu == "Customer Recommendation":
             elif my_rec <= 90: status, color = "Warning 🟡", "orange"
             else: status, color = "Churn 🔴", "red"
 
-            # --- BAGIAN 1: HEADER & METRICS (RFM) ---
             st.markdown("---")
             with st.container(border=True):
                 c1, c2 = st.columns([1, 3])
@@ -373,13 +288,10 @@ elif menu == "Customer Recommendation":
                     st.title(c_icon)
                     st.markdown(f"### {c_name}")
                     st.caption(f"Customer ID: {cid} | Status: :{color}[{status}]")
-                
                 with c2:
-                    # PROGRESS BARS (Sesuai gambar 2)
                     max_rec = rfm['Recency'].max()
                     max_freq = rfm['Frequency'].quantile(0.95) 
                     max_mon = rfm['Monetary'].quantile(0.95)
-
                     def calc_prog(v, m): return min((v/m), 1.0)
                     
                     m1, m2, m3 = st.columns(3)
@@ -393,60 +305,47 @@ elif menu == "Customer Recommendation":
                         st.metric("Monetary", f"£{my_mon:,.0f}")
                         st.progress(calc_prog(my_mon, max_mon), "Nilai")
 
-            # --- BAGIAN 2: RIWAYAT BELANJA (CHART) ---
-            # Sesuai gambar 2
             st.write("### 📊 Riwayat Belanja")
             my_hist = df_full[df_full['Customer ID'] == cid].copy()
             if not my_hist.empty:
-                # Group by YearMonth
                 chart_data = my_hist.groupby('YearMonth')['Revenue'].sum()
-                st.area_chart(chart_data, color="#4CAF50") # Warna hijau
-            else:
-                st.info("Tidak ada riwayat transaksi detail.")
+                st.area_chart(chart_data, color="#4CAF50")
+            else: st.info("Tidak ada riwayat transaksi detail.")
 
-            # --- BAGIAN 3: RECOMMENDED ACTION (STRATEGY) ---
             st.markdown("---")
-            # Container Strategi (Mirip gambar 1 tapi full width di atas katalog)
             with st.container(border=True):
                 c_strat_icon, c_strat_text = st.columns([0.5, 4])
-                with c_strat_icon:
-                    st.write("## 📢")
+                with c_strat_icon: st.write("## 📢")
                 with c_strat_text:
                     st.subheader("Recommended Action")
-                    
                     promo_text = ""
-                    if cluster == 1: # Whales
+                    if cluster == 1: 
                         st.success("🎯 **Strategy: VIP Treatment**")
                         st.write("Berikan akses *Early Bird* atau *Exclusive Packaging*. Jangan berikan diskon murah.")
                         promo_text = "💎 VIP EXCLUSIVE"
-                    elif cluster == 3: # Churn
+                    elif cluster == 3: 
                         st.error("🎯 **Strategy: Win-Back (Diskon Besar)**")
                         st.write("Berikan diskon **20-30%** atau *Free Shipping* untuk memancing transaksi.")
                         promo_text = "🏷️ DISKON 20% OFF"
-                    elif cluster == 0: # Hemat
+                    elif cluster == 0: 
                         st.warning("🎯 **Strategy: Volume Diskon**")
                         st.write("Tawarkan 'Beli 2 Lebih Murah' atau Voucher Ongkir.")
                         promo_text = "⚡ BEST VALUE DEAL"
-                    else: # Regular
+                    else: 
                         st.info("🎯 **Strategy: Upselling**")
                         st.write("Tawarkan produk pelengkap (Bundling) untuk menaikkan nilai belanja.")
                         promo_text = "✨ REKOMENDASI"
 
-            # --- BAGIAN 4: KATALOG REKOMENDASI (CARDS) ---
             st.write("## 📦 Katalog Rekomendasi")
             st.caption(f"Produk yang dikurasi khusus untuk **{c_name}** sesuai strategi di atas.")
 
-            # Tab Full Width (Sesuai gambar 1)
             tab1, tab2, tab3 = st.tabs(["🔥 Top Picks (Cluster)", "🤝 You Might Like (Personal)", "🆕 Try Something New"])
-            
             with tab1:
                 st.caption(f"Barang wajib punya untuk grup {c_name}.")
                 display_product_cards(results["Top Cluster Products"], df_full, promo_label=promo_text)
-            
             with tab2:
                 st.caption("Berdasarkan analisa kemiripan belanja user ini (Collaborative Filtering).")
                 display_product_cards(results["Similar Products (CF)"], df_full, promo_label="❤️ FOR YOU")
-            
             with tab3:
                 st.caption("Barang populer yang belum pernah dibeli (Potensi Upsell).")
                 display_product_cards(results["Cluster Products Not Bought"], df_full, promo_label="🆕 NEW ARRIVAL")
@@ -482,9 +381,9 @@ elif menu == "Cluster Insight":
 
     st.subheader("📊 Perbandingan vs Rata-rata Toko")
     c1, c2, c3 = st.columns(3)
-    with c1: st.metric("Recency", f"{avg_rec:.1f} Hari", f"{avg_rec - global_rec:.1f} vs Global", delta_color="inverse")
-    with c2: st.metric("Frequency", f"{avg_freq:.1f} Trx", f"{avg_freq - global_freq:.1f} vs Global")
-    with c3: st.metric("Monetary", f"£{avg_mon:,.0f}", f"£{avg_mon - global_mon:,.0f} vs Global")
+    c1.metric("Recency", f"{avg_rec:.1f} Hari", f"{avg_rec - global_rec:.1f} vs Global", delta_color="inverse")
+    c2.metric("Frequency", f"{avg_freq:.1f} Trx", f"{avg_freq - global_freq:.1f} vs Global")
+    c3.metric("Monetary", f"£{avg_mon:,.0f}", f"£{avg_mon - global_mon:,.0f} vs Global")
 
     st.markdown("---")
     col_chart, col_prod = st.columns([2, 1])
