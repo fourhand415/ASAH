@@ -124,7 +124,7 @@ def recommend_products(customer_id, rfm_df, top_cluster_df, user_matrix, item_si
     }, None
 
 # Sidebar Filters
-st.sidebar.image("https://cdn-icons-png.flaticon.com/512/3135/3135715.png", width=50)
+st.sidebar.image("https://assets.cdn.dicoding.com/original/commons/logo-asah.png", width=200)
 st.sidebar.header("Global Filters")
 
 all_countries = sorted(df_full["Country"].dropna().unique())
